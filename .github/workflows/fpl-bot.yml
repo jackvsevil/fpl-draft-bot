@@ -27,6 +27,8 @@ on:
         type: boolean
 
 permissions:
+  # contents: read is REQUIRED for actions/checkout. Listing any permission
+  # here sets all unlisted ones to none, so both must be spelled out.
   contents: read
   issues: write
 
@@ -46,6 +48,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          # Optional. Without it the roundup still posts, just without the
+          # closing banter section.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           python fpl_bot.py \
             --mode "${{ inputs.mode || 'auto' }}" \
