@@ -25,11 +25,17 @@ on:
         required: false
         default: false
         type: boolean
+      force:
+        description: 'Post again even if already posted for that gameweek'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
-  # contents: read is REQUIRED for actions/checkout. Listing any permission
-  # here sets all unlisted ones to none, so both must be spelled out.
-  contents: read
+  # contents: write is needed both for actions/checkout and to commit the
+  # published archive back to the repo. Listing any permission here sets all
+  # unlisted ones to none, so both must be spelled out.
+  contents: write
   issues: write
 
 jobs:
@@ -55,4 +61,18 @@ jobs:
           python fpl_bot.py \
             --mode "${{ inputs.mode || 'auto' }}" \
             ${{ inputs.gw && format('--gw {0}', inputs.gw) || '' }} \
-            ${{ inputs.dry_run == true && '--dry-run' || '' }}
+            ${{ inputs.dry_run == true && '--dry-run' || '' }} \
+            ${{ inputs.force == true && '--force' || '' }}
+
+      - name: Publish the archive
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          if [ -n "$(git status --porcelain docs)" ]; then
+            git config user.name  "fpl-draft-bot"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add docs
+            git commit -m "Publish latest post"
+            git push
+          else
+            echo "Nothing new to publish."
+          fi
