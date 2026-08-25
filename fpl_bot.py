@@ -61,6 +61,10 @@ GH_TOKEN = os.environ.get("GITHUB_TOKEN")
 GH_REPO = os.environ.get("GITHUB_REPOSITORY")
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
+# Where the published archive is written. The workflow commits this folder
+# and GitHub Pages serves it. Set to None to turn publishing off.
+PUBLISH_DIR = "docs"
+
 # Model for the banter section. See platform.claude.com for current IDs.
 BANTER_MODEL = "claude-sonnet-5"
 
@@ -133,6 +137,129 @@ def get(path, required=True):
     if required:
         sys.exit(1)
     return None
+
+
+# ────────────────────────── publishing ────────────────────────
+
+PAGE_CSS = """
+*,*::before,*::after{box-sizing:border-box}
+:root{
+  --ink:#0E1726; --ink-2:#16223A; --line:#243350;
+  --paper:#E8EAF0; --dim:#8A97B1; --signal:#F5B301; --pitch:#4ADE80;
+}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--ink);color:var(--paper);
+  font:16px/1.6 "IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+.wrap{max-width:820px;margin:0 auto;padding:32px 20px 96px}
+header{border-bottom:2px solid var(--signal);padding-bottom:20px;margin-bottom:8px}
+.eyebrow{font-family:"Barlow Condensed",Arial Narrow,sans-serif;
+  letter-spacing:.22em;text-transform:uppercase;font-size:13px;color:var(--signal);margin:0}
+h1{font-family:"Barlow Condensed",Arial Narrow,sans-serif;font-weight:700;
+  font-size:clamp(38px,9vw,68px);line-height:.94;letter-spacing:-.01em;margin:6px 0 10px}
+.sub{color:var(--dim);font-size:14px;margin:0}
+.ticker{border-bottom:1px solid var(--line);padding:14px 0;margin-bottom:28px;
+  display:flex;flex-wrap:wrap;gap:8px 22px}
+.tick{font-size:14px;white-space:nowrap}
+.tick b{color:var(--signal);font-weight:600}
+article{border-top:1px solid var(--line);padding:26px 0}
+article:first-of-type{border-top:none}
+.meta{font-family:"Barlow Condensed",Arial Narrow,sans-serif;text-transform:uppercase;
+  letter-spacing:.16em;font-size:13px;color:var(--dim);margin:0 0 12px}
+.meta .gw{color:var(--pitch)}
+pre{white-space:pre-wrap;word-wrap:break-word;margin:0;font:inherit;color:var(--paper)}
+pre b{color:var(--signal);font-weight:600}
+details>summary{cursor:pointer;list-style:none;color:var(--dim);font-size:14px;
+  padding:6px 0}
+details>summary::-webkit-details-marker{display:none}
+details>summary::before{content:"▸ ";color:var(--signal)}
+details[open]>summary::before{content:"▾ "}
+summary:focus-visible,a:focus-visible{outline:2px solid var(--signal);outline-offset:3px}
+footer{color:var(--dim);font-size:13px;border-top:1px solid var(--line);
+  margin-top:40px;padding-top:18px}
+@media (prefers-reduced-motion:no-preference){
+  article{animation:rise .4s ease both}
+  @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+}
+"""
+
+
+def _esc(t):
+    return (t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+
+def _bold(t):
+    """Turn WhatsApp *bold* into <b>, on escaped text."""
+    out, parts = [], t.split("*")
+    for i, p in enumerate(parts):
+        out.append(f"<b>{p}</b>" if i % 2 else p)
+    return "".join(out)
+
+
+def render_page(posts):
+    """posts: newest first, each {title, gw, kind, when, body}"""
+    latest = posts[0] if posts else None
+    ticks = ""
+    if latest:
+        for line in latest["body"].split("\n"):
+            if "–" in line and not line.startswith("*") and len(line) < 60:
+                ticks += f'<span class="tick">{_esc(line)}</span>'
+                if ticks.count("<span") >= 4:
+                    break
+    arts = []
+    for i, p in enumerate(posts):
+        body = _bold(_esc(p["body"]))
+        meta = (f'<p class="meta"><span class="gw">Gameweek {p["gw"]}</span> '
+                f'&nbsp;·&nbsp; {p["kind"]} &nbsp;·&nbsp; {p["when"]}</p>')
+        if i == 0:
+            arts.append(f"<article>{meta}<pre>{body}</pre></article>")
+        else:
+            arts.append(f"<article>{meta}<details><summary>Read this one</summary>"
+                        f"<pre>{body}</pre></details></article>")
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Draft Footballers Society</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>{PAGE_CSS}</style></head>
+<body><div class="wrap">
+<header>
+<p class="eyebrow">Draft Footballers Society</p>
+<h1>The Weekly</h1>
+<p class="sub">Previews and roundups, posted automatically. Newest first.</p>
+</header>
+<div class="ticker">{ticks}</div>
+{"".join(arts) if arts else "<article><p class='meta'>Nothing posted yet.</p></article>"}
+<footer>Generated from the Fantasy Premier League Draft API. Updated whenever a
+gameweek starts or finishes.</footer>
+</div></body></html>"""
+
+
+def publish(title, body, gw, kind):
+    """Write the post into the published archive."""
+    if not PUBLISH_DIR:
+        return
+    try:
+        os.makedirs(PUBLISH_DIR, exist_ok=True)
+        store = os.path.join(PUBLISH_DIR, "posts.json")
+        posts = []
+        if os.path.exists(store):
+            with open(store) as f:
+                posts = json.load(f)
+        posts = [p for p in posts if p.get("title") != title]
+        posts.insert(0, {"title": title, "gw": gw, "kind": kind,
+                         "when": datetime.now(timezone.utc).strftime("%d %b %Y"),
+                         "body": body})
+        posts.sort(key=lambda p: (p["gw"], p["kind"] == "roundup"), reverse=True)
+        with open(store, "w") as f:
+            json.dump(posts, f, indent=1, ensure_ascii=False)
+        with open(os.path.join(PUBLISH_DIR, "index.html"), "w") as f:
+            f.write(render_page(posts))
+        open(os.path.join(PUBLISH_DIR, ".nojekyll"), "w").close()
+        log(f"PUBLISH {title} — archive now has {len(posts)} posts")
+    except Exception as e:
+        log(f"STATUS  publish: failed - {e}")
 
 
 # ─────────────────────────── GitHub ───────────────────────────
@@ -610,6 +737,8 @@ def main():
     ap.add_argument("--mode", choices=["auto", "preview", "roundup"], default="auto")
     ap.add_argument("--gw", type=int)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--force", action="store_true",
+                    help="post again even if an issue with that title exists")
     a = ap.parse_args()
 
     bs = get("bootstrap-static")
@@ -638,7 +767,9 @@ def main():
         log("Nothing to do.")
         return
 
-    seen = set() if a.dry_run else existing_titles()
+    seen = set() if (a.dry_run or a.force) else existing_titles()
+    if a.force:
+        log("FORCE   ignoring the already-posted check")
     for kind, gw in jobs:
         title = f"GW{gw} {kind}"
         if title in seen:
@@ -652,6 +783,7 @@ def main():
             print(f"\n===== {title} =====\n\n{body}")
         else:
             post_issue(title, body)
+            publish(title, body, gw, kind)
 
 
 if __name__ == "__main__":
