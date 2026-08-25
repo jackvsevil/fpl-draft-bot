@@ -193,6 +193,12 @@ def stacks(ids, P, n=3):
 
 
 def moves_by_entry(gw, P):
+    """Moves keyed by ENTRY_ID.
+
+    The transactions endpoint's `entry` field is the entry_id (114770), NOT
+    the league_entry id (115216). Verified against real data. Do not
+    'correct' this without checking the raw JSON first.
+    """
     d = get(f"draft/league/{LEAGUE_ID}/transactions", required=False)
     if not d:
         return None
@@ -326,8 +332,8 @@ def build_preview(gw, bs, P):
             L.append("")
 
         if mv:
-            ml = [f"{E['entry_name']}: " + "; ".join(mv[E["id"]])
-                  for E in (A, B) if mv.get(E["id"])]
+            ml = [f"{E['entry_name']}: " + "; ".join(mv[E["entry_id"]])
+                  for E in (A, B) if mv.get(E["entry_id"])]
             if ml:
                 L += ["*Moves:* " + " | ".join(ml), ""]
 
@@ -375,34 +381,88 @@ def build_roundup(gw, bs, P):
                      f"{s['matches_won']}-{s['matches_drawn']}-{s['matches_lost']}, "
                      f"{s['total']} pts ({s['points_for']} for)")
 
+    squads = {}
     if pts:
-        scored, regret = [], []
         for E in d["league_entries"]:
-            st, bn, _ = picks_for(eid[E["id"]], gw)
-            if not st:
+            st, bn, subs = picks_for(eid[E["id"]], gw)
+            if st:
+                squads[E["id"]] = (st, bn or [], subs or [])
+
+    # ---- per-fixture write-ups ----
+    if squads:
+        L += ["", RULE, "", "*THE GAMES*", ""]
+        for m in done:
+            a_id, b_id = m["league_entry_1"], m["league_entry_2"]
+            A, B = ent.get(a_id), ent.get(b_id)
+            if not (A and B and a_id in squads and b_id in squads):
                 continue
+            pa, pb = m["league_entry_1_points"], m["league_entry_2_points"]
+            win, lose = (A, B) if pa > pb else (B, A)
+            wp, lp = max(pa, pb), min(pa, pb)
+            margin = wp - lp
+
+            L.append(f"*{nick(A['entry_name'])} {pa} – {pb} {nick(B['entry_name'])}*")
+            if margin == 0:
+                L.append("Dead level.")
+            elif margin <= 3:
+                L.append(f"{nick(win['entry_name'])} by {margin}.")
+            elif margin >= 25:
+                L.append(f"{nick(win['entry_name'])} by {margin} — never in doubt.")
+            else:
+                L.append(f"{nick(win['entry_name'])} by {margin}.")
+
+            for E in (A, B):
+                st, bn, _ = squads[E["id"]]
+                top = sorted(((pts.get(e, 0), P[e]["name"]) for e in st),
+                             reverse=True)[:3]
+                blanks = [P[e]["name"] for e in st if pts.get(e, 0) <= 0]
+                bits = ["led by " + ", ".join(f"{n} ({p})" for p, n in top)]
+                if blanks:
+                    bits.append(f"{len(blanks)} blank"
+                                + ("s" if len(blanks) > 1 else "")
+                                + f" ({', '.join(blanks[:3])})")
+                left = sum(pts.get(e, 0) for e in bn)
+                if left:
+                    best_b = max(bn, key=lambda e: pts.get(e, 0))
+                    bits.append(f"{left} left on the bench, "
+                                f"{P[best_b]['name']} the pick of them")
+                L.append(f"{E['entry_name']}: " + "; ".join(bits) + ".")
+
+            # would the bench have changed it?
+            lose_bench = sum(pts.get(e, 0) for e in squads[lose["id"]][1])
+            if lose_bench > margin:
+                L.append(f"{nick(lose['entry_name'])} had {lose_bench} on the "
+                         f"bench and lost by {margin}. Work that one out.")
+            L.append("")
+
+    if pts:
+        scored = []
+        for lid, (st, bn, _) in squads.items():
+            nm = ent[lid]["entry_name"]
             for e in st:
-                scored.append((pts.get(e, 0), P[e]["name"], P[e]["club"],
-                               E["entry_name"]))
-            regret.append((sum(pts.get(e, 0) for e in (bn or [])), E["entry_name"]))
+                scored.append((pts.get(e, 0), P[e]["name"], P[e]["club"], nm))
         if scored:
             scored.sort(reverse=True)
             p, n, c, t = scored[0]
-            L += ["", RULE, "", f"*STAR MAN* — {n} ({c}), {p} pts, for {t}", "",
+            L += [RULE, "", f"*STAR MAN* — {n} ({c}), {p} pts, for {t}", "",
                   "*Top starters:* " + "; ".join(f"{n} {p}" for p, n, c, t in scored[:5]),
                   "",
                   "*Lowest starters:* " + "; ".join(f"{n} {p}" for p, n, c, t in scored[-5:]),
                   ""]
+        regret = sorted(((sum(pts.get(e, 0) for e in bn), ent[lid]["entry_name"])
+                         for lid, (st, bn, _) in squads.items()), reverse=True)
         if regret:
-            regret.sort(reverse=True)
-            L += [f"*Bench regret:* {regret[0][1]} left {regret[0][0]} points "
-                  f"on the bench", ""]
+            L += ["*Points left on the bench*", ""]
+            for v, nm in regret:
+                L.append(f"{nm} — {v}")
+            L.append("")
 
     mv = moves_by_entry(gw, P)
     if mv:
+        by_entry_id = {e["entry_id"]: e for e in d["league_entries"]}
         L += [RULE, "", "*MOVES*", ""]
-        for le, lines in mv.items():
-            nm = ent.get(le, {}).get("entry_name", "Unknown")
+        for eidk, lines in mv.items():
+            nm = by_entry_id.get(eidk, {}).get("entry_name", "Unknown")
             for x in lines:
                 L.append(f"{nm}: {x}")
         L.append("")
