@@ -73,6 +73,9 @@ Write 4-6 short lines of closing commentary on the week, given the data below.
 Rules:
 - Dry and understated. One clause, not three. British English.
 - Let the data be the punchline. State a number plainly and stop.
+- Refer to each team by the MANAGER'S FIRST NAME (Tom, Jack, Calum...),
+  not the team name. Team names are decorative; the names are who people
+  actually are.
 - Be specific: name the player, the manager, the figure.
 - NEVER invent a statistic, player, result or detail. Use only what is given.
   If you are unsure of something, leave it out.
@@ -91,6 +94,8 @@ fixture write ONE paragraph of 2-3 sentences.
 
 Rules:
 - Dry, British, understated. No hype, no exclamation marks, no emoji.
+- Refer to each team by the MANAGER'S FIRST NAME (Tom, Jack, Calum...),
+  not the team name.
 - Be specific: name players and figures from the data given.
 - NEVER invent a statistic, player, result or detail. Use only what is
   given. If unsure, leave it out.
@@ -185,6 +190,16 @@ def parse_dt(s):
 
 def nick(team):
     return NICKNAMES.get(team, team)
+
+
+def who(entry):
+    """Manager first name — the primary way teams are referred to."""
+    return entry.get("player_first_name") or entry.get("entry_name", "?")
+
+
+def who_full(entry):
+    """Manager first name with the team name after it, for headings."""
+    return f"{who(entry)} ({nick(entry.get('entry_name',''))})"
 
 
 def picks_for(entry_id, gw):
@@ -363,12 +378,12 @@ def build_preview(gw, bs, P):
         if not A or not B:
             continue
         L += [RULE, ""]
-        L.append(f"*{nick(A['entry_name'])} v {nick(B['entry_name'])}*")
+        L.append(f"*{who(A)} v {who(B)}*")
         rl = ""
         if rank.get(a_id) and rank.get(b_id):
             rl = f" (#{rank[a_id]} v #{rank[b_id]})"
         stad = STADIUMS.get(A["entry_name"])
-        L.append(f"{A['player_first_name']} v {B['player_first_name']}{rl}"
+        L.append(f"{nick(A['entry_name'])} v {nick(B['entry_name'])}{rl}"
                  + (f" — at {stad}" if stad else ""))
         L.append("")
 
@@ -379,14 +394,14 @@ def build_preview(gw, bs, P):
             if st:
                 all_start[E["id"]] = st
                 xi = fmt_xi(st, P)
-                L.append(f"*{E['entry_name']}* {xi[0]}")
+                L.append(f"*{who(E)}* — {nick(E['entry_name'])} {xi[0]}")
                 L += xi[1:]
                 L.append("")
 
         pl, w, dr, pts = h2h(d["matches"], a_id, b_id, gw)
         if pl:
             L.append(f"*Season head-to-head:* played {pl} — "
-                     f"{A['entry_name']} {w[a_id]}, {B['entry_name']} {w[b_id]}"
+                     f"{who(A)} {w[a_id]}, {who(B)} {w[b_id]}"
                      + (f", {dr} drawn" if dr else "")
                      + f" (points {pts[a_id]}–{pts[b_id]})")
             L.append("")
@@ -409,7 +424,7 @@ def build_preview(gw, bs, P):
 
         fl = []
         for E in (A, B):
-            fl += [f"{x} ({E['entry_name']})" for x in flagged(sides[E["id"]][0] or [], P)]
+            fl += [f"{x} ({who(E)})" for x in flagged(sides[E["id"]][0] or [], P)]
         if fl:
             L += ["*Flagged:* " + "; ".join(fl), ""]
 
@@ -418,7 +433,7 @@ def build_preview(gw, bs, P):
             bn = sides[E["id"]][1]
             if bn:
                 best = min(bn, key=lambda e: P[e].get("rank") or 999)
-                bw.append(f"{E['entry_name']} leaves out {P[best]['name']} "
+                bw.append(f"{who(E)} leaves out {P[best]['name']} "
                           f"(ranked {P[best]['rank']})")
         if bw:
             L += ["*Benched:* " + "; ".join(bw), ""]
@@ -428,13 +443,13 @@ def build_preview(gw, bs, P):
             sk = stacks(sides[E["id"]][0] or [], P)
             if sk:
                 sk_any = True
-                L.append(f"*{E['entry_name']} stacks:* " + "; ".join(
+                L.append(f"*{who(E)} stacks:* " + "; ".join(
                     f"{len(v)} {c} ({', '.join(v)})" for c, v in sk.items()))
         if sk_any:
             L.append("")
 
         if mv:
-            ml = [f"{E['entry_name']}: " + "; ".join(mv[E["entry_id"]])
+            ml = [f"{who(E)}: " + "; ".join(mv[E["entry_id"]])
                   for E in (A, B) if mv.get(E["entry_id"])]
             if ml:
                 L += ["*Moves:* " + " | ".join(ml), ""]
@@ -472,14 +487,16 @@ def build_roundup(gw, bs, P):
     for m in done:
         A, B = ent.get(m["league_entry_1"]), ent.get(m["league_entry_2"])
         if A and B:
-            L.append(f"{nick(A['entry_name'])} {m['league_entry_1_points']} – "
-                     f"{m['league_entry_2_points']} {nick(B['entry_name'])}")
+            L.append(f"{who(A)} {m['league_entry_1_points']} – "
+                     f"{m['league_entry_2_points']} {who(B)}")
 
     L += ["", RULE, "", "*STANDINGS*", ""]
-    for s in d.get("standings", []):
+    # The API returns these sorted, but don't rely on it.
+    for s in sorted(d.get("standings", []),
+                    key=lambda x: (x.get("rank") is None, x.get("rank") or 0)):
         e = ent.get(s["league_entry"])
         if e:
-            L.append(f"{s['rank']}. {e['entry_name']} — "
+            L.append(f"{s['rank']}. {who_full(e)} — "
                      f"{s['matches_won']}-{s['matches_drawn']}-{s['matches_lost']}, "
                      f"{s['total']} pts ({s['points_for']} for)")
 
@@ -504,15 +521,15 @@ def build_roundup(gw, bs, P):
             wp, lp = max(pa, pb), min(pa, pb)
             margin = wp - lp
 
-            L.append(f"*{nick(A['entry_name'])} {pa} – {pb} {nick(B['entry_name'])}*")
+            L.append(f"*{who(A)} {pa} – {pb} {who(B)}*")
             if margin == 0:
                 L.append("Dead level.")
             elif margin <= 3:
-                L.append(f"{nick(win['entry_name'])} by {margin}.")
+                L.append(f"{who(win)} by {margin}.")
             elif margin >= 25:
-                L.append(f"{nick(win['entry_name'])} by {margin} — never in doubt.")
+                L.append(f"{who(win)} by {margin} — never in doubt.")
             else:
-                L.append(f"{nick(win['entry_name'])} by {margin}.")
+                L.append(f"{who(win)} by {margin}.")
 
             for E in (A, B):
                 st, bn, _ = squads[E["id"]]
@@ -529,19 +546,19 @@ def build_roundup(gw, bs, P):
                     best_b = max(bn, key=lambda e: pts.get(e, 0))
                     bits.append(f"{left} left on the bench, "
                                 f"{P[best_b]['name']} the pick of them")
-                L.append(f"{E['entry_name']}: " + "; ".join(bits) + ".")
+                L.append(f"{who(E)}: " + "; ".join(bits) + ".")
 
             # would the bench have changed it?
             lose_bench = sum(pts.get(e, 0) for e in squads[lose["id"]][1])
             if lose_bench > margin:
-                L.append(f"{nick(lose['entry_name'])} had {lose_bench} on the "
+                L.append(f"{who(lose)} had {lose_bench} on the "
                          f"bench and lost by {margin}. Work that one out.")
 
             # remember where a prose paragraph should go for this fixture
             insert_at.append(len(L))
             fixture_blocks.append("\n".join(
-                [f"{A['entry_name']} ({A['player_first_name']}) "
-                 f"{pa} v {pb} {B['entry_name']} ({B['player_first_name']})"]
+                [f"{who(A)} ({A['entry_name']}) {pa} v {pb} "
+                 f"{who(B)} ({B['entry_name']})"]
                 + [x for x in L[-4:] if x]))
             L.append("")
 
@@ -554,7 +571,7 @@ def build_roundup(gw, bs, P):
     if pts:
         scored = []
         for lid, (st, bn, _) in squads.items():
-            nm = ent[lid]["entry_name"]
+            nm = who(ent[lid])
             for e in st:
                 scored.append((pts.get(e, 0), P[e]["name"], P[e]["club"], nm))
         if scored:
@@ -565,7 +582,7 @@ def build_roundup(gw, bs, P):
                   "",
                   "*Lowest starters:* " + "; ".join(f"{n} {p}" for p, n, c, t in scored[-5:]),
                   ""]
-        regret = sorted(((sum(pts.get(e, 0) for e in bn), ent[lid]["entry_name"])
+        regret = sorted(((sum(pts.get(e, 0) for e in bn), who(ent[lid]))
                          for lid, (st, bn, _) in squads.items()), reverse=True)
         if regret:
             L += ["*Points left on the bench*", ""]
