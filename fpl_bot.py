@@ -59,6 +59,29 @@ SESSION.headers.update({
 
 GH_TOKEN = os.environ.get("GITHUB_TOKEN")
 GH_REPO = os.environ.get("GITHUB_REPOSITORY")
+ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY")
+
+# Model for the banter section. See platform.claude.com for current IDs.
+BANTER_MODEL = "claude-sonnet-5"
+
+VOICE = """You write a weekly roundup for an eight-man fantasy football draft
+league called the Draft Footballers Society. It gets pasted into a WhatsApp
+group of friends.
+
+Write 4-6 short lines of closing commentary on the week, given the data below.
+
+Rules:
+- Dry and understated. One clause, not three. British English.
+- Let the data be the punchline. State a number plainly and stop.
+- Be specific: name the player, the manager, the figure.
+- NEVER invent a statistic, player, result or detail. Use only what is given.
+  If you are unsure of something, leave it out.
+- No hype, no exclamation marks, no emoji, no "DISASTER" energy.
+- Tease the decision, not the person. Spread it around.
+- Plain text only. Bold is *single asterisks*. No headings, no bullets.
+- Do not repeat the scores back; the reader has just read them.
+
+Return only the lines themselves, nothing else."""
 
 
 def log(m):
@@ -232,6 +255,34 @@ def h2h(matches, a, b, before):
         else:
             dr += 1
     return pl, w, dr, pts
+
+
+def banter(facts):
+    """Ask Claude for a short closing section. Returns None on any failure."""
+    if not ANTHROPIC_KEY:
+        log("STATUS  banter: no ANTHROPIC_API_KEY set, skipping")
+        return None
+    try:
+        r = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": ANTHROPIC_KEY,
+                     "anthropic-version": "2023-06-01",
+                     "content-type": "application/json"},
+            json={"model": BANTER_MODEL, "max_tokens": 500,
+                  "system": VOICE,
+                  "messages": [{"role": "user", "content": facts}]},
+            timeout=60)
+        if r.status_code != 200:
+            log(f"STATUS  banter: HTTP {r.status_code} {r.text[:200]}")
+            return None
+        parts = [b.get("text", "") for b in r.json().get("content", [])
+                 if b.get("type") == "text"]
+        out = "\n".join(p.strip() for p in parts if p.strip())
+        log("STATUS  banter: ok" if out else "STATUS  banter: empty response")
+        return out or None
+    except Exception as e:
+        log(f"STATUS  banter: failed - {e}")
+        return None
 
 
 # ─────────────────────────── PREVIEW ──────────────────────────
@@ -467,7 +518,11 @@ def build_roundup(gw, bs, P):
                 L.append(f"{nm}: {x}")
         L.append("")
 
-    return "\n".join(L)
+    body = "\n".join(L)
+    extra = banter(f"Gameweek {gw} of the season.\n\n{body}")
+    if extra:
+        body += f"\n{RULE}\n\n{extra}\n"
+    return body
 
 
 # ──────────────────────────── main ────────────────────────────
