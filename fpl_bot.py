@@ -83,6 +83,25 @@ Rules:
 
 Return only the lines themselves, nothing else."""
 
+REPORT_VOICE = """You write short match reports for an eight-man fantasy football
+draft league, for a WhatsApp group of friends.
+
+You will be given several fixtures, separated by a line of ===. For EACH
+fixture write ONE paragraph of 2-3 sentences.
+
+Rules:
+- Dry, British, understated. No hype, no exclamation marks, no emoji.
+- Be specific: name players and figures from the data given.
+- NEVER invent a statistic, player, result or detail. Use only what is
+  given. If unsure, leave it out.
+- Do not restate the scoreline as a bare number; the reader has it above.
+- Tease the decision, not the person.
+- Plain text. No headings, no bullets, no bold.
+
+Separate your paragraphs with a line containing only ###
+Return exactly as many paragraphs as there are fixtures, in the same order,
+and nothing else."""
+
 
 def log(m):
     print(m, file=sys.stderr)
@@ -255,6 +274,38 @@ def h2h(matches, a, b, before):
         else:
             dr += 1
     return pl, w, dr, pts
+
+
+def match_reports(blocks):
+    """One API call returning a paragraph per fixture. None on any failure."""
+    if not ANTHROPIC_KEY or not blocks:
+        return None
+    payload = "\n===\n".join(blocks)
+    try:
+        r = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": ANTHROPIC_KEY,
+                     "anthropic-version": "2023-06-01",
+                     "content-type": "application/json"},
+            json={"model": BANTER_MODEL, "max_tokens": 1000,
+                  "system": REPORT_VOICE,
+                  "messages": [{"role": "user", "content": payload}]},
+            timeout=90)
+        if r.status_code != 200:
+            log(f"STATUS  reports: HTTP {r.status_code} {r.text[:200]}")
+            return None
+        txt = "\n".join(b.get("text", "") for b in r.json().get("content", [])
+                        if b.get("type") == "text")
+        paras = [p.strip() for p in txt.split("###") if p.strip()]
+        if len(paras) != len(blocks):
+            log(f"STATUS  reports: expected {len(blocks)} paragraphs, "
+                f"got {len(paras)} — skipping prose")
+            return None
+        log("STATUS  reports: ok")
+        return paras
+    except Exception as e:
+        log(f"STATUS  reports: failed - {e}")
+        return None
 
 
 def banter(facts):
@@ -442,6 +493,7 @@ def build_roundup(gw, bs, P):
     # ---- per-fixture write-ups ----
     if squads:
         L += ["", RULE, "", "*THE GAMES*", ""]
+        fixture_blocks, insert_at = [], []
         for m in done:
             a_id, b_id = m["league_entry_1"], m["league_entry_2"]
             A, B = ent.get(a_id), ent.get(b_id)
@@ -484,7 +536,20 @@ def build_roundup(gw, bs, P):
             if lose_bench > margin:
                 L.append(f"{nick(lose['entry_name'])} had {lose_bench} on the "
                          f"bench and lost by {margin}. Work that one out.")
+
+            # remember where a prose paragraph should go for this fixture
+            insert_at.append(len(L))
+            fixture_blocks.append("\n".join(
+                [f"{A['entry_name']} ({A['player_first_name']}) "
+                 f"{pa} v {pb} {B['entry_name']} ({B['player_first_name']})"]
+                + [x for x in L[-4:] if x]))
             L.append("")
+
+        prose = match_reports(fixture_blocks)
+        if prose:
+            # insert from the bottom up so earlier indices stay valid
+            for idx, para in sorted(zip(insert_at, prose), reverse=True):
+                L.insert(idx, para)
 
     if pts:
         scored = []
@@ -508,18 +573,14 @@ def build_roundup(gw, bs, P):
                 L.append(f"{nm} — {v}")
             L.append("")
 
-    mv = moves_by_entry(gw, P)
-    if mv:
-        by_entry_id = {e["entry_id"]: e for e in d["league_entries"]}
-        L += [RULE, "", "*MOVES*", ""]
-        for eidk, lines in mv.items():
-            nm = by_entry_id.get(eidk, {}).get("entry_name", "Unknown")
-            for x in lines:
-                L.append(f"{nm}: {x}")
-        L.append("")
+    # Moves live in the PREVIEW, not here — see build_preview().
 
     body = "\n".join(L)
-    extra = banter(f"Gameweek {gw} of the season.\n\n{body}")
+    extra = banter(
+        f"Gameweek {gw} of the season.\n\n{body}\n\n"
+        "Write about the league as a whole — the table, patterns across "
+        "fixtures, the bench totals. Do NOT repeat points already made in "
+        "the match reports above.")
     if extra:
         body += f"\n{RULE}\n\n{extra}\n"
     return body
