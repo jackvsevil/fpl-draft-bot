@@ -27,13 +27,14 @@ import requests
 # ─────────────────────────── CONFIG ───────────────────────────
 LEAGUE_ID = 22578
 
-# Post the preview within this many hours of the deadline.
-PREVIEW_WINDOW_HOURS = 6
+# Post the preview within this many hours of the deadline. Picks do not
+# unlock on the stroke of the deadline, so the bot may skip the first run or
+# two inside this window and post on a later one.
+PREVIEW_WINDOW_HOURS = 8
 
-# Nicknames and stadiums. Add more as Jack supplies them — the key is the
-# team name exactly as it appears in the game.
+# Team nicknames. Add more as they arrive — the key is the team name
+# exactly as it appears in the game.
 NICKNAMES = {"Beautiful Boys XI": "The Beauties"}
-STADIUMS = {"Beautiful Boys XI": "the Hello Kitty\u2122 Stadium"}
 
 # The API abbreviates some names oddly. Add any others you spot.
 NAME_FIXES = {
@@ -319,6 +320,14 @@ def nick(team):
     return NICKNAMES.get(team, team)
 
 
+def ordinal(n):
+    """1 -> 1st. Avoids '#1', which GitHub renders as an issue link."""
+    if n is None:
+        return None
+    suf = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suf}"
+
+
 def who(entry):
     """Manager first name — the primary way teams are referred to."""
     return entry.get("player_first_name") or entry.get("entry_name", "?")
@@ -498,6 +507,7 @@ def build_preview(gw, bs, P):
 
     L = [f"*GAMEWEEK {gw} — PREVIEW*", ""]
     all_start = {}
+    got_any_xi = False
 
     for m in fx:
         a_id, b_id = m["league_entry_1"], m["league_entry_2"]
@@ -508,16 +518,16 @@ def build_preview(gw, bs, P):
         L.append(f"*{who(A)} v {who(B)}*")
         rl = ""
         if rank.get(a_id) and rank.get(b_id):
-            rl = f" (#{rank[a_id]} v #{rank[b_id]})"
-        stad = STADIUMS.get(A["entry_name"])
-        L.append(f"{nick(A['entry_name'])} v {nick(B['entry_name'])}{rl}"
-                 + (f" — at {stad}" if stad else ""))
+            rl = f" ({ordinal(rank[a_id])} v {ordinal(rank[b_id])})"
+        L.append(f"{nick(A['entry_name'])} v {nick(B['entry_name'])}{rl}")
         L.append("")
 
         sides = {}
         for E in (A, B):
             st, bn, _ = picks_for(eid[E["id"]], gw)
             sides[E["id"]] = (st, bn)
+            if st:
+                got_any_xi = True
             if st:
                 all_start[E["id"]] = st
                 xi = fmt_xi(st, P)
@@ -580,6 +590,13 @@ def build_preview(gw, bs, P):
                   for E in (A, B) if mv.get(E["entry_id"])]
             if ml:
                 L += ["*Moves:* " + " | ".join(ml), ""]
+
+    # Picks unlock shortly AFTER the deadline, not on the stroke of it. A
+    # preview with no lineups is barely worth reading, so bail out and let
+    # the next hourly run try again inside the window.
+    if not got_any_xi:
+        log("SKIP    preview — no starting XIs available yet, will retry")
+        return None
 
     if all_start:
         cc = defaultdict(int)
