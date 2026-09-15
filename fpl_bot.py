@@ -692,11 +692,14 @@ def build_roundup(gw, bs, P):
                                 f"{P[best_b]['name']} the pick of them")
                 L.append(f"{who(E)}: " + "; ".join(bits) + ".")
 
-            # would the bench have changed it?
+            # Would the bench have changed it? State the fact only — no canned
+            # quip. A hardcoded joke reads as a glitch by the fourth week; the
+            # match report below is model-written and varies, and this line is
+            # included in its context so it can comment on it in fresh words.
             lose_bench = sum(pts.get(e, 0) for e in squads[lose["id"]][1])
             if lose_bench > margin:
-                L.append(f"{who(lose)} had {lose_bench} on the "
-                         f"bench and lost by {margin}. Work that one out.")
+                L.append(f"{who(lose)} lost by {margin} with {lose_bench} "
+                         f"unused on the bench.")
 
             # remember where a prose paragraph should go for this fixture
             insert_at.append(len(L))
