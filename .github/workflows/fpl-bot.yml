@@ -66,6 +66,64 @@ jobs:
 
       - name: Publish the archive
         if: ${{ inputs.dry_run != true }}
+        # continue-on-error: a failed push must never take down a run whose
+        # post already went out as an issue.
+        continue-on-error: true
+        run: |
+          if [ -z "$(git status --porcelain docs)" ]; then
+            echo "Nothing new to publish."
+            exit 0
+          fi
+          git config user.name  "fpl-draft-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs
+          git commit -m "Publish latest post"
+          # Retry against a moving branch; another hourly run may have pushed.
+          for i in 1 2 3; do
+            if git push; then
+              echo "Published."
+              exit 0
+            fi
+            echo "Push failed (attempt $i). Rebasing and retrying..."
+            git pull --rebase --autostash || true
+            sleep 5
+          done
+          echo "::warning::Could not publish the archive after 3 attempts."
+          echo "Check that the workflow has 'contents: write' permission."
+          exit 1
+
+  # unlisted ones to none, so both must be spelled out.
+  contents: write
+  issues: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - run: pip install requests
+
+      - name: Run the bot
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          # Optional. Without it the roundup still posts, just without the
+          # closing banter section.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          python fpl_bot.py \
+            --mode "${{ inputs.mode || 'auto' }}" \
+            ${{ inputs.gw && format('--gw {0}', inputs.gw) || '' }} \
+            ${{ inputs.dry_run == true && '--dry-run' || '' }} \
+            ${{ inputs.force == true && '--force' || '' }}
+
+      - name: Publish the archive
+        if: ${{ inputs.dry_run != true }}
         run: |
           if [ -n "$(git status --porcelain docs)" ]; then
             git config user.name  "fpl-draft-bot"
